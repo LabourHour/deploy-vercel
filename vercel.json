@@ -2,11 +2,14 @@
   "version": 2,
   "regions": ["sin1"],
   "functions": {
-    "index.js": {
+    "api/index.js": {
       "maxDuration": 300
     }
   },
-  "routes": [
-    { "src": "/(.*)", "dest": "index.js" }
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api/index.js"
+    }
   ]
 }

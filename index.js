@@ -553,7 +553,7 @@ function handleSsConnection(ws, msg) {
 
 // ========================== HTTP 服务与订阅路由 ==========================
 const httpServer = http.createServer(async (req, res) => {
-  const reqUrl = req.url || '/';
+  const reqUrl = req.headers['x-matched-path'] || req.url || '/';
   const urlObj = new URL(reqUrl, `http://${req.headers.host || 'localhost'}`);
   const pathname = urlObj.pathname;
 
@@ -651,7 +651,7 @@ const httpServer = http.createServer(async (req, res) => {
 const wss = new WebSocket.Server({ server: httpServer });
 
 wss.on('connection', (ws, req) => {
-  const url = req.url || '';
+  const url = req.headers['x-matched-path'] || req.url || '';
   const expectedPath = `/${WSPATH}`;
 
   if (!url.startsWith(expectedPath)) {
