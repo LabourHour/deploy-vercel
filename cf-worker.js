@@ -36,13 +36,12 @@ export default {
       newHeaders.set('X-Forwarded-Host', url.hostname);
       newHeaders.set('X-Real-IP', request.headers.get('cf-connecting-ip') || '');
 
-      // 处理 WebSocket 长连接
+      // 处理 WebSocket 长连接（注意：GET 请求禁止传递 body，避免触发 TypeError 抛错 502）
       const upgradeHeader = request.headers.get('Upgrade');
       if (upgradeHeader && upgradeHeader.toLowerCase() === 'websocket') {
         return fetch(targetUrl.toString(), {
-          method: request.method,
-          headers: newHeaders,
-          body: request.body
+          method: 'GET',
+          headers: newHeaders
         });
       }
 

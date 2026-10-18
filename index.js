@@ -17,6 +17,7 @@ const os = require('os');
 const http = require('http');
 const fs = require('fs');
 const net = require('net');
+const dgram = require('dgram');
 const dns = require('dns');
 const path = require('path');
 const https = require('https');
@@ -278,6 +279,12 @@ function handleVlsConnection(ws, msg) {
       return false;
     }
 
+    // 检查指令类型 (0x01 = TCP, 0x02 = UDP)
+    if (cmd === 0x02) {
+      handleVlsUdpConnection(ws, host, port, msg.slice(offset), VERSION);
+      return true;
+    }
+
     // 回复 VLESS 握手响应包: [VERSION, 0]
     ws.send(new Uint8Array([VERSION, 0]));
     const duplex = createWebSocketStream(ws);
@@ -308,6 +315,81 @@ function handleVlsConnection(ws, msg) {
   } catch (err) {
     logErr('handleVlsConnection error:', err);
     return false;
+  }
+}
+
+// VLESS UDP 处理 (支持 DNS 查询与实时 UDP 数据包转发)
+function handleVlsUdpConnection(ws, host, port, initialPayload, VERSION) {
+  try {
+    ws.send(new Uint8Array([VERSION, 0]));
+    const duplex = createWebSocketStream(ws);
+    const udpSocket = dgram.createSocket('udp4');
+    let isClosed = false;
+
+    const cleanup = () => {
+      if (isClosed) return;
+      isClosed = true;
+      try { udpSocket.close(); } catch (e) { }
+      try { duplex.destroy(); } catch (e) { }
+      try { ws.close(); } catch (e) { }
+    };
+
+    udpSocket.on('error', (err) => {
+      logWarn(`VLESS UDP socket error for ${host}:${port}:`, err.message);
+      cleanup();
+    });
+
+    // 监听远端 UDP 响应并按 VLESS 规范封包回传给客户端: [2字节大端长度][payload]
+    udpSocket.on('message', (msg) => {
+      if (isClosed) return;
+      try {
+        const lenBuf = Buffer.alloc(2);
+        lenBuf.writeUInt16BE(msg.length, 0);
+        ws.send(Buffer.concat([lenBuf, msg]));
+      } catch (e) {
+        cleanup();
+      }
+    });
+
+    let idleTimer = setTimeout(cleanup, 30000);
+    const refreshTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(cleanup, 30000);
+    };
+
+    resolveHost(host).then(resolvedIP => {
+      if (isClosed) return;
+
+      let buffer = initialPayload && initialPayload.length > 0 ? initialPayload : Buffer.alloc(0);
+
+      const processUdpBuffer = () => {
+        while (buffer.length >= 2) {
+          const packetLen = buffer.readUInt16BE(0);
+          if (buffer.length < 2 + packetLen) break;
+          const packet = buffer.slice(2, 2 + packetLen);
+          buffer = buffer.slice(2 + packetLen);
+          refreshTimer();
+          udpSocket.send(packet, port, resolvedIP, (err) => {
+            if (err) cleanup();
+          });
+        }
+      };
+
+      processUdpBuffer();
+
+      duplex.on('data', chunk => {
+        refreshTimer();
+        buffer = Buffer.concat([buffer, chunk]);
+        processUdpBuffer();
+      });
+
+      duplex.on('error', cleanup);
+      duplex.on('close', cleanup);
+      duplex.on('end', cleanup);
+    }).catch(cleanup);
+  } catch (err) {
+    logErr('handleVlsUdpConnection error:', err);
+    try { ws.close(); } catch (e) { }
   }
 }
 
@@ -611,7 +693,7 @@ function setupKeepAlive() {
   const pingUrl = KEEP_ALIVE_URL;
   log('Starting keep-alive scheduler to:', pingUrl);
 
-  setInterval(async () => {
+  const timer = setInterval(async () => {
     try {
       await axios.get(pingUrl, { timeout: 10000 });
       log('Keep-alive ping sent successfully');
@@ -619,6 +701,7 @@ function setupKeepAlive() {
       logWarn('Keep-alive ping failed:', e.message);
     }
   }, 10 * 60 * 1000); // 每 10 分钟一次
+  timer.unref();
 }
 
 // ========================== 哪吒探针客户端 (按需懒加载) ==========================
@@ -775,19 +858,26 @@ message IP {
 }
 
 // ========================== 服务启动 ==========================
-httpServer.listen(PORT, () => {
-  console.log(`[Deploy-Vercel] Server is listening on port ${PORT}`);
-  console.log(`[Deploy-Vercel] Disguise URL: http://localhost:${PORT}/`);
-  console.log(`[Deploy-Vercel] Subscription URL: http://localhost:${PORT}/${SUB_PATH}`);
-  console.log(`[Deploy-Vercel] WebSocket Endpoint: ws://localhost:${PORT}/${WSPATH}`);
-  
-  if (UUID === DEFAULT_FALLBACK_UUID) {
-    console.warn(`[Deploy-Vercel WARNING] 当前正使用默认公共 UUID (${UUID})！建议在 Vercel 环境变量中配置您专属的 UUID 以确保安全。`);
-  }
+if (require.main === module || !process.env.VERCEL) {
+  if (!httpServer.listening) {
+    httpServer.listen(PORT, () => {
+      console.log(`[Deploy-Vercel] Server is listening on port ${PORT}`);
+      console.log(`[Deploy-Vercel] Disguise URL: http://localhost:${PORT}/`);
+      console.log(`[Deploy-Vercel] Subscription URL: http://localhost:${PORT}/${SUB_PATH}`);
+      console.log(`[Deploy-Vercel] WebSocket Endpoint: ws://localhost:${PORT}/${WSPATH}`);
+      
+      if (UUID === DEFAULT_FALLBACK_UUID) {
+        console.warn(`[Deploy-Vercel WARNING] 当前正使用默认公共 UUID (${UUID})！建议在 Vercel 环境变量中配置您专属的 UUID 以确保安全。`);
+      }
 
-  setupKeepAlive();
-  startNezhaAgent().catch(err => logWarn('Nezha agent error:', err));
-});
+      setupKeepAlive();
+      startNezhaAgent().catch(err => logWarn('Nezha agent error:', err));
+    });
+  }
+}
+
+// 挂载 wss 对象供外部测试或清理
+httpServer.wss = wss;
 
 // 兼容 Vercel Serverless Function 导出
 module.exports = httpServer;

@@ -74,7 +74,7 @@
 
 ### 使用 Cloudflare Worker 反向代理：
 1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/) ➡ **Compute (Workers & Pages)** ➡ **Create application** ➡ **Create Worker**。
-2. 将仓库中 [`cf-worker.js`](file:///c:/实用主义/deploy-vercel/cf-worker.js) 的全部内容复制粘贴到 Worker 编辑器中。
+2. 将仓库中 [`cf-worker.js`](./cf-worker.js) 的全部内容复制粘贴到 Worker 编辑器中。
 3. 修改开头的 `VERCEL_DOMAINS` 为你在 Vercel 上部署成功的域名：
    ```javascript
    const VERCEL_DOMAINS = [
@@ -83,7 +83,7 @@
    ```
 4. 点击 **Save and Deploy**。
 5. 部署完成后，在 Vercel 项目的 **Settings ➡ Environment Variables** 中：
-   - 将 `DOMAIN` 设置为你的 Cloudflare Worker 域名（例如 `my-worker.xyz.workers.dev` 或你自定义绑定的域名）。
+   - 将 `DOMAIN` 设置为你为 Worker 绑定的自定义域名（例如 `my-worker.yourdomain.com`；注意：若使用默认 `workers.dev` 域名，Cloudflare 官方限制不允许直连优选 IP）。
    - 重新点击 Vercel 的 **Redeploy** 重新部署一次。
 6. 以后直接使用 `https://你的Worker域名/vercel` 获取订阅即可！
 
@@ -95,6 +95,9 @@
   https://你的Worker域名/vercel?ip=visa.cn
   ```
   导出的订阅中将**自动同时包含直连节点与 CDN 优选加速节点**！
+
+> [!NOTE]
+> **优选 IP 使用前提**：Cloudflare Anycast 优选 IP 仅接收属于 Cloudflare 自身网络的 SNI 证书。因此必须将环境变量 `DOMAIN` 设置为**接入了 Cloudflare 的自定义域名或绑定了自定义域名的 Cloudflare Worker**，不能直接使用未过 CDN 的 `*.vercel.app` 域名，否则 Cloudflare 会拒绝 TLS 握手。
 
 ---
 
