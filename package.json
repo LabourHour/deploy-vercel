@@ -1,10 +1,11 @@
 {
-  "name": "nzws-js",
-  "version": "0.1.0",
-  "description": "nzws-js",
+  "name": "deploy-vercel",
+  "version": "1.0.0",
+  "description": "High-Performance Multi-Protocol Serverless Proxy & Subscription Generator on Vercel",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node test/test_server.js"
   },
   "dependencies": {
     "ws": "^8.21.2",
@@ -12,12 +13,11 @@
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.8.1",
     "systeminformation": "^5.33.1"
-    
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   }
 }

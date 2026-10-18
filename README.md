@@ -1,84 +1,131 @@
-## Vercel 部署说明
-1：点击Use this template ➡ Create a new repostory 创建一个私密项目, 名称随意
+# Deploy-Vercel 🚀
 
-2: 修改index.js文件里的环境变量保存，不需要的留空
+基于 **Vercel Serverless** 平台的高性能多协议代理节点服务与智能订阅生成器。
 
-3: 用AI生成一个纯html的网页替换`index.thml`伪装网页
-
-4：打开vercel连接项目部署
-  - 打开 Vercel 控制台
-  - 点击 “New Project”
-  - Import该项目
-  - 选择默认配置, Install Command打开，设置为`npm install`
-  - 点击 “Deploy”, 等待部署完成
-
-5：部署完成后确认没问题，将反代后的域名填写到`index.js`的DOMAIN环境变量里, 然后用 https://www.jshaman.com/index.html 混淆替换后保存
-
-6：获取订阅信息，修改优选域名使用(节点里的address字段),可以自行套订阅器，比如：https://sub.eooce.xx.kg
-
-
-## Vercel 常用地区代码对照表
-
-下面是常见 Vercel `regions` 代码对应关系：
-
-| 地区代码 | 城市/区域 | 国家/地区 | 中文说明 |
-|---|---|---|---|
-| `hnd1` | Tokyo | Japan | 日本东京 |
-| `kix1` | Osaka | Japan | 日本大阪 |
-| `icn1` | Seoul | South Korea | 韩国首尔 |
-| `hkg1` | Hong Kong | Hong Kong | 中国香港 |
-| `sin1` | Singapore | Singapore | 新加坡 |
-| `syd1` | Sydney | Australia | 澳大利亚悉尼 |
-| `bom1` | Mumbai | India | 印度孟买 |
-| `del1` | New Delhi | India | 印度新德里 |
-| `fra1` | Frankfurt | Germany | 德国法兰克福 |
-| `lhr1` | London | United Kingdom | 英国伦敦 |
-| `cdg1` | Paris | France | 法国巴黎 |
-| `ams1` | Amsterdam | Netherlands | 荷兰阿姆斯特丹 |
-| `mad1` | Madrid | Spain | 西班牙马德里 |
-| `dub1` | Dublin | Ireland | 爱尔兰都柏林 |
-| `dxb1` | Dubai | United Arab Emirates | 阿联酋迪拜 |
-| `jnb1` | Johannesburg | South Africa | 南非约翰内斯堡 |
-| `cpt1` | Cape Town | South Africa | 南非开普敦 |
-| `gru1` | São Paulo | Brazil | 巴西圣保罗 |
-| `sfo1` | San Francisco | United States | 美国旧金山 |
-| `iad1` | Washington, D.C. | United States | 美国华盛顿特区 |
-| `pdx1` | Portland | United States | 美国波特兰 |
-| `mia1` | Miami | United States | 美国迈阿密 |
-| `ewr1` | Newark | United States | 美国纽瓦克 |
-| `yul1` | Montréal | Canada | 加拿大蒙特利尔 |
+支持 **VLESS (WS)**、**Trojan (WS)** 与 **Shadowsocks (WS)** 三大主流协议，内置高保真伪装站、DNS 内存加速缓存与 Cloudflare 优选 IP 智能生成。
 
 ---
 
-## 注意事项
+## 🌟 核心特性与优化提升
 
-部署成功后，访问项目地址，确认：
+| 功能特性 | 原版状态 | 完善优化后状态 |
+| :--- | :--- | :--- |
+| **配置方式** | 需手动修改 `index.js` 源代码 | **100% 环境变量配置**，无需改动任何源码，开箱即用 |
+| **代码混淆/安全** | 引导用户去第三方在线工具混淆代码 | **无后门纯净开源**，切断向未知名保活平台泄露私有订阅的行为 |
+| **连接稳定性** | 目标连接失败时不销毁 WebSocket，导致内存泄漏挂死 | **双向全生命周期流管理**，自动超时释放，杜绝内存与句柄耗尽 |
+| **异常防护** | VLESS 解包缺少防御，畸形包会导致整个 Node 进程崩溃 | **全协议多层 `try...catch` 防御**，抵御非法嗅探与探测请求 |
+| **DNS 解析** | 每次出站连接均实时发起一次 DoH 请求，延迟高且易阻塞 | **内置 5 分钟 DNS TTL 高速缓存** + Google/Cloudflare 并行回退 |
+| **优选 IP 支持** | 只能生成 Vercel 域名节点，需用户手动挨个修改节点地址 | **原生支持 `CF_IP` 环境变量与 `?ip=xxx` 参数**，直接生成优选 CDN 节点 |
+| **订阅格式** | 仅输出单一 Base64 编码 | 支持 **标准 Base64 订阅** 与 **`?raw=1` 浏览器明文直读模式** |
+| **国内直连反代** | 原反代脚本缺失 `Host` 请求头修正，导致 Vercel 频发 404 | 提供 **专业级 Cloudflare Worker 反代脚本 (`cf-worker.js`)** |
 
-1. 页面能正常访问
-2. 生成的订阅链接能获取到节点
-3. vervel分配的域名已被墙，无法使用直连节点
-4. 哪吒不亮，不用填写
+---
 
+## 🛠️ 环境变量完整参考 (Environment Variables)
 
-## 使用cloudflare的workers或snippets反代项目域名，给节点套CDN加速
-```bash
-export default {
-    async fetch(request, env) {
-        let url = new URL(request.url);
-        if (url.pathname.startsWith('/')) {
-            var arrStr = [
-                'xxx-xxx.vercel.app',   // 此处单引号里填写你的vercel分配的域名，不包含https://
-            ];
-            url.protocol = 'https:'
-            url.hostname = getRandomArray(arrStr)
-            let new_request = new Request(url, request);
-            return fetch(new_request);
-        }
-        return env.ASSETS.fetch(request);
-    },
-};
-function getRandomArray(array) {
-  const randomIndex = Math.floor(Math.random() * array.length);
-  return array[randomIndex];
-}
-```
+在 Vercel 控制台的项目设置中即可配置，**无需修改任何代码**：
+
+| 环境变量名 | 默认值 | 是否必填 | 作用说明 |
+| :--- | :--- | :---: | :--- |
+| `UUID` | 自动生成或默认 | **强烈建议填写** | 节点核心身份凭证（UUID 格式，VLESS/Trojan/SS 密码均使用此值） |
+| `DOMAIN` | 自动识别当前 Host | 选填 | 节点绑定的域名（填写反代域名或自定义域名，如 `my-proxy.workers.dev`） |
+| `CF_IP` | 空 | 选填 | **Cloudflare 优选 IP 或优选域名**（如 `visa.cn`、`cf.090227.xyz` 等），配置后自动生成优选加速节点 |
+| `SUB_PATH` | `vercel` | 选填 | 节点订阅的访问路径（例如设为 `mysecret`，则订阅地址为 `/mysecret`） |
+| `WSPATH` | UUID 前 8 位 | 选填 | WebSocket 传输路径（默认截取 UUID 前 8 位） |
+| `NAME` | `Vercel` | 选填 | 节点在客户端中显示的名称前缀 |
+| `PORT` | `3000` | 选填 | 本地或容器内监听的端口号（Vercel 上会自动管理） |
+| `NEZHA_SERVER` | 空 | 选填 | 哪吒探针服务端地址（格式 `nz.example.com:443` 或 `nz.example.com:5555`） |
+| `NEZHA_KEY` | 空 | 选填 | 哪吒探针客户端通信密钥 |
+| `SHOW_LOG` | `false` | 选填 | 是否打印调试日志（设为 `true` 开启） |
+
+---
+
+## 🚀 5 分钟极速部署教程
+
+### 第一步：Fork 或导入本仓库
+1. 点击 GitHub 右上角的 **Fork** 将本仓库复制到你的个人账号（建议设为 **Private 私密仓库**）。
+
+### 第二步：导入到 Vercel
+1. 打开 [Vercel 官方控制台](https://vercel.com/dashboard) 并登录。
+2. 点击 **“Add New...” ➡ “Project”**。
+3. 在 Import Git Repository 列表中找到刚刚 Fork 的仓库，点击 **“Import”**。
+
+### 第三步：配置环境变量与部署
+1. 展开 **“Environment Variables”** 面板，添加以下变量：
+   - `UUID`：填写你专属的 UUID（可以在 [uuidgenerator.net](https://www.uuidgenerator.net/) 在线生成）。
+   - `NAME`：给你的节点起一个名字（如 `MyNode`）。
+2. 在 **Build and Output Settings** 中保持默认即可（Install Command 会自动识别执行 `npm install`）。
+3. 点击 **“Deploy”**，等待 1~2 分钟直到部署完成。
+
+### 第四步：获取节点订阅
+- 部署成功后，Vercel 会为你分配一个官方二级域名（如 `https://your-project.vercel.app`）。
+- 打开浏览器访问：
+  - **伪装主页**：`https://your-project.vercel.app/`（正常显示环保主题官网）
+  - **节点订阅**：`https://your-project.vercel.app/vercel`（复制此链接直接导入客户端）
+  - **明文直读**：`https://your-project.vercel.app/vercel?raw=1`（浏览器直接查看生成的节点明文链接）
+
+---
+
+## ⚡ 解决国内无法直连问题（Cloudflare Worker 反代教程）
+
+> [!IMPORTANT]
+> 由于 `*.vercel.app` 官方域名在大陆被阻断，直接连接会导致握手超时。  
+> 推荐通过 **Cloudflare Workers** 反向代理并配合 **优选 IP** 获得毫秒级访问体验。
+
+### 使用 Cloudflare Worker 反向代理：
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/) ➡ **Compute (Workers & Pages)** ➡ **Create application** ➡ **Create Worker**。
+2. 将仓库中 [`cf-worker.js`](file:///c:/实用主义/deploy-vercel/cf-worker.js) 的全部内容复制粘贴到 Worker 编辑器中。
+3. 修改开头的 `VERCEL_DOMAINS` 为你在 Vercel 上部署成功的域名：
+   ```javascript
+   const VERCEL_DOMAINS = [
+     'your-project-name.vercel.app',
+   ];
+   ```
+4. 点击 **Save and Deploy**。
+5. 部署完成后，在 Vercel 项目的 **Settings ➡ Environment Variables** 中：
+   - 将 `DOMAIN` 设置为你的 Cloudflare Worker 域名（例如 `my-worker.xyz.workers.dev` 或你自定义绑定的域名）。
+   - 重新点击 Vercel 的 **Redeploy** 重新部署一次。
+6. 以后直接使用 `https://你的Worker域名/vercel` 获取订阅即可！
+
+### 配合优选 IP 极致加速：
+如果你有高速的 Cloudflare CDN 优选 IP/域名（例如 `visa.cn`, `cf.090227.xyz`）：
+- **方法 1（全局配置）**：在 Vercel 环境变量中添加 `CF_IP = visa.cn`。
+- **方法 2（动态参数）**：在订阅链接后面直接加上 `?ip=visa.cn`，例如：
+  ```text
+  https://你的Worker域名/vercel?ip=visa.cn
+  ```
+  导出的订阅中将**自动同时包含直连节点与 CDN 优选加速节点**！
+
+---
+
+## 🌍 Vercel 优质节点部署地区推荐
+
+在 `vercel.json` 中的 `regions` 字段可自由选择部署机房，推荐选用对亚太网络友好的区域：
+
+| 地区代码 | 城市 | 推荐指数 | 说明 |
+| :---: | :---: | :---: | :--- |
+| `sin1` | 新加坡 (Singapore) | ⭐⭐⭐⭐⭐ | 亚太首选，国内延迟极佳，推荐默认 |
+| `hnd1` | 日本东京 (Tokyo) | ⭐⭐⭐⭐⭐ | 东亚首选，延迟低，联通/电信友好 |
+| `kix1` | 日本大阪 (Osaka) | ⭐⭐⭐⭐ | 日本备用机房 |
+| `icn1` | 韩国首尔 (Seoul) | ⭐⭐⭐⭐ | 韩国节点 |
+| `sfo1` | 美国旧金山 (San Francisco) | ⭐⭐⭐⭐ | 美西节点，稳定性极佳 |
+| `iad1` | 美国华盛顿 (Washington D.C.) | ⭐⭐⭐ | 美东节点 |
+| `fra1` | 德国法兰克福 (Frankfurt) | ⭐⭐⭐ | 欧洲枢纽 |
+
+*(注：部分冷门区域如 `dxb1`, `jnb1`, `cpt1` 在 Vercel 免费用量下限制较多，请避免选填)*
+
+---
+
+## 📱 客户端导入方法
+
+- **v2rayN / v2rayNG**：点击 `订阅设置` ➡ `添加` ➡ 粘贴订阅 URL ➡ 保存并更新订阅。
+- **Shadowrocket (小火箭)**：首页右上角 `+` 号 ➡ 类型选择 `Subscribe` ➡ 粘贴订阅 URL ➡ 点击完成。
+- **Clash Verge / Mihomo Party / Sing-box**：直接将订阅链接粘贴进在线订阅转换器（如 [Subconverter](https://sub.xeton.dev/)），选择对应客户端配置后下载即可。
+
+---
+
+## ⚠️ 注意事项与防封建议
+
+1. **合理使用流量**：Vercel 属于前端与 Serverless 托管平台，免费账户每月有 100GB 基础流量额度，请勿用于长时间大流量 P2P 下载或挂机挖矿，避免触发 Fair Use 限制被封号。
+2. **探针功能说明**：哪吒探针在无常驻守护进程的 Serverless 容器中可能会休眠断连（这是 Serverless 平台按需调度的特性），建议作为轻量节点使用；如需 7×24 小时常驻探针，推荐部署在传统 VPS 或 Docker 容器中。
+3. **保持私密**：请确保你的 GitHub 仓库为 **Private**，避免敏感的 UUID 或自定义域名在公开代码库中暴露。
