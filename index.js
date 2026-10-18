@@ -618,6 +618,55 @@ const httpServer = http.createServer(async (req, res) => {
         nodes.push(vlsPreferred, troPreferred, ssPreferred);
       }
 
+      const isClash = urlObj.searchParams.get('clash') === '1' ||
+                      urlObj.searchParams.get('format') === 'clash' ||
+                      (req.headers['user-agent'] || '').toLowerCase().includes('clash') ||
+                      (req.headers['user-agent'] || '').toLowerCase().includes('mihomo');
+
+      if (isClash) {
+        const vlessName = `${nodeTag}-VLESS`;
+        const trojanName = `${nodeTag}-Trojan`;
+        const proxyNames = [vlessName, trojanName];
+
+        let proxiesYaml = `  - name: "${vlessName}"\n    type: vless\n    server: "${currentDomain}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"\n  - name: "${trojanName}"\n    type: trojan\n    server: "${currentDomain}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`;
+
+        if (queryPreferredIP) {
+          const prefVlsName = `[优选CDN] ${nodeTag}-VLESS`;
+          const prefTroName = `[优选CDN] ${nodeTag}-Trojan`;
+          proxyNames.push(prefVlsName, prefTroName);
+          proxiesYaml += `\n  - name: "${prefVlsName}"\n    type: vless\n    server: "${queryPreferredIP}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"\n  - name: "${prefTroName}"\n    type: trojan\n    server: "${queryPreferredIP}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`;
+        }
+
+        const proxyList = proxyNames.map(name => `      - "${name}"`).join('\n');
+
+        const clashYaml = `port: 7890
+socks-port: 7891
+allow-lan: false
+mode: rule
+log-level: info
+proxies:
+${proxiesYaml}
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+${proxyList}
+      - DIRECT
+
+rules:
+  - MATCH,PROXY
+`;
+
+        res.writeHead(200, {
+          'Content-Type': 'text/yaml; charset=utf-8',
+          'Content-Disposition': 'inline; filename="clash.yaml"',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(clashYaml);
+        return;
+      }
+
       const subscriptionContent = nodes.join('\n');
 
       if (rawMode) {
