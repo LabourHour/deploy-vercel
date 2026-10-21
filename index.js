@@ -612,6 +612,7 @@ const httpServer = http.createServer(async (req, res) => {
 
       // 检查是否有自定义优选 IP 参数
       const queryPreferredIP = urlObj.searchParams.get('ip') || CF_IP;
+      const enableCarrierIps = urlObj.searchParams.get('cf_ips') === '1' || process.env.ENABLE_CF_IPS === 'true';
       const isHttps = req.headers['x-forwarded-proto'] === 'https' || !net.isIP(currentDomain);
       const tlsParam = isHttps ? 'tls' : 'none';
       const ssTlsParam = isHttps ? 'tls;' : '';
@@ -620,7 +621,7 @@ const httpServer = http.createServer(async (req, res) => {
       const nodes = [];
       const nodeTag = NAME ? `${NAME}-${geo.isp}` : geo.isp;
 
-      // 1. 直连节点 (原生机房线路)
+      // 1. 直连节点 (原生机房线路 - 稳定高速)
       const vlsDirectTag = `[原生直连] ${nodeTag}-VLESS`;
       const troDirectTag = `[原生直连] ${nodeTag}-Trojan`;
       const ssDirectTag = `[原生直连] ${nodeTag}-Shadowsocks`;
@@ -666,44 +667,36 @@ const httpServer = http.createServer(async (req, res) => {
         });
       }
 
-      // 3. 内置三网（移动/联通/电信/高速）优选 Anycast IP 矩阵
-      const carrierConfigs = [
-        { key: 'cm', label: '🇨🇳 移动优选', ips: DEFAULT_CLEAN_IPS.cm },
-        { key: 'cu', label: '🇨🇳 联通优选', ips: DEFAULT_CLEAN_IPS.cu },
-        { key: 'ct', label: '🇨🇳 电信优选', ips: DEFAULT_CLEAN_IPS.ct },
-        { key: 'fast', label: '⚡ 高速通用', ips: DEFAULT_CLEAN_IPS.fast }
-      ];
+      // 3. 仅在明确开启时注入三网 Anycast IP (因未走 CF 代理时 CF 优选 IP 会握手超时)
+      if (enableCarrierIps) {
+        const carrierConfigs = [
+          { key: 'cm', label: '🇨🇳 移动优选', ips: DEFAULT_CLEAN_IPS.cm },
+          { key: 'cu', label: '🇨🇳 联通优选', ips: DEFAULT_CLEAN_IPS.cu },
+          { key: 'ct', label: '🇨🇳 电信优选', ips: DEFAULT_CLEAN_IPS.ct },
+          { key: 'fast', label: '⚡ 高速通用', ips: DEFAULT_CLEAN_IPS.fast }
+        ];
 
-      const carrierNodeMap = {
-        cm: [],
-        cu: [],
-        ct: [],
-        fast: []
-      };
+        for (const item of carrierConfigs) {
+          item.ips.forEach((cleanIp, idx) => {
+            const vlsName = `${item.label}-${idx + 1}-VLESS`;
+            const troName = `${item.label}-${idx + 1}-Trojan`;
 
-      for (const item of carrierConfigs) {
-        item.ips.forEach((cleanIp, idx) => {
-          const vlsName = `${item.label}-${idx + 1}-VLESS`;
-          const troName = `${item.label}-${idx + 1}-Trojan`;
+            if (idx === 0) {
+              const vlsLink = `vless://${UUID}@${cleanIp}:${port}?encryption=none&security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(vlsName)}`;
+              const troLink = `trojan://${UUID}@${cleanIp}:${port}?security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(troName)}`;
+              nodes.push(vlsLink, troLink);
+            }
 
-          carrierNodeMap[item.key].push(vlsName, troName);
-
-          // raw 订阅中为每个运营商添加代表性优选节点
-          if (idx === 0) {
-            const vlsLink = `vless://${UUID}@${cleanIp}:${port}?encryption=none&security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(vlsName)}`;
-            const troLink = `trojan://${UUID}@${cleanIp}:${port}?security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(troName)}`;
-            nodes.push(vlsLink, troLink);
-          }
-
-          clashProxiesList.push({
-            name: vlsName,
-            yaml: `  - name: "${vlsName}"\n    type: vless\n    server: "${cleanIp}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+            clashProxiesList.push({
+              name: vlsName,
+              yaml: `  - name: "${vlsName}"\n    type: vless\n    server: "${cleanIp}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+            });
+            clashProxiesList.push({
+              name: troName,
+              yaml: `  - name: "${troName}"\n    type: trojan\n    server: "${cleanIp}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+            });
           });
-          clashProxiesList.push({
-            name: troName,
-            yaml: `  - name: "${troName}"\n    type: trojan\n    server: "${cleanIp}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
-          });
-        });
+        }
       }
 
       const isClash = urlObj.searchParams.get('clash') === '1' ||
@@ -719,10 +712,6 @@ const httpServer = http.createServer(async (req, res) => {
         const proxiesYaml = clashProxiesList.map(p => p.yaml).join('\n');
         const allProxyList = allProxyNames.map(name => `      - "${name}"`).join('\n');
         const directProxyList = clashDirectProxies.map(name => `      - "${name}"`).join('\n');
-        const cmProxyList = carrierNodeMap.cm.map(name => `      - "${name}"`).join('\n');
-        const cuProxyList = carrierNodeMap.cu.map(name => `      - "${name}"`).join('\n');
-        const ctProxyList = carrierNodeMap.ct.map(name => `      - "${name}"`).join('\n');
-        const fastProxyList = carrierNodeMap.fast.map(name => `      - "${name}"`).join('\n');
 
         const directServerRule = net.isIP(currentDomain)
           ? `  - IP-CIDR,${currentDomain}/32,DIRECT,no-resolve`
@@ -808,10 +797,6 @@ proxy-groups:
     type: select
     proxies:
       - "🚀 自动选择"
-      - "🇨🇳 移动专选"
-      - "🇨🇳 联通专选"
-      - "🇨🇳 电信专选"
-      - "⚡ 高速选优"
       - "🌐 原生直连"
 ${allProxyList}
       - DIRECT
@@ -829,34 +814,6 @@ ${allProxyList}
     tolerance: 50
     proxies:
 ${allProxyList}
-  - name: "🇨🇳 移动专选"
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    proxies:
-${cmProxyList}
-  - name: "🇨🇳 联通专选"
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    proxies:
-${cuProxyList}
-  - name: "🇨🇳 电信专选"
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    proxies:
-${ctProxyList}
-  - name: "⚡ 高速选优"
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    proxies:
-${fastProxyList}
   - name: "🌐 原生直连"
     type: select
     proxies:

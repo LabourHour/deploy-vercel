@@ -185,14 +185,18 @@ setTimeout(async () => {
       throw new Error('Missing subscription metadata or security headers');
     }
     if (!clashYaml.includes('🚀 自动选择') ||
-        !clashYaml.includes('🇨🇳 移动专选') ||
-        !clashYaml.includes('🇨🇳 联通专选') ||
-        !clashYaml.includes('🇨🇳 电信专选') ||
-        !clashYaml.includes('⚡ 高速选优') ||
-        !clashYaml.includes('🌐 原生直连')) {
-      throw new Error('Missing carrier-optimized proxy groups in Clash YAML');
+        !clashYaml.includes('🌐 原生直连') ||
+        !clashYaml.includes('[原生直连]')) {
+      throw new Error('Missing key direct proxy groups in Clash YAML');
     }
-    console.log('[Test 8] Subscription headers & Carrier-Optimized Matrix verification passed!');
+
+    // Also verify optional cf_ips mode
+    const cfIpsRes = await fetch('http://localhost:3011/my-sub?clash=1&cf_ips=1');
+    const cfIpsYaml = await cfIpsRes.text();
+    if (!cfIpsYaml.includes('移动优选') || !cfIpsYaml.includes('联通优选')) {
+      throw new Error('cf_ips parameter failed to inject carrier nodes');
+    }
+    console.log('[Test 8] Subscription headers, Clean Direct Nodes & Optional cf_ips Matrix verification passed!');
 
     console.log('\n>>> ALL AUTOMATED TESTS (HTTP + TCP PROXY + UDP RELAY + CLASH YAML + CARRIER MATRIX + HEADERS) PASSED SUCCESSFULLY! <<<');
 
