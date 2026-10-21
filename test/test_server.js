@@ -160,7 +160,21 @@ setTimeout(async () => {
       });
     });
 
-    console.log('\n>>> ALL AUTOMATED TESTS (HTTP + TCP PROXY + UDP RELAY) PASSED SUCCESSFULLY! <<<');
+    // 7. Test Clash YAML subscription mode (anti-DNS leak & rules verification)
+    const clashRes = await fetch('http://localhost:3011/my-sub?clash=1', {
+      headers: { 'User-Agent': 'ClashVerge/1.0' }
+    });
+    const clashYaml = await clashRes.text();
+    console.log('[Test 7] Clash YAML status:', clashRes.status, 'YAML length:', clashYaml.length);
+    if (!clashYaml.includes('enhanced-mode: fake-ip') ||
+        !clashYaml.includes('rule-providers:') ||
+        !clashYaml.includes('https://8.8.8.8/dns-query#PROXY') ||
+        !clashYaml.includes('RULE-SET,cn_ip,DIRECT')) {
+      throw new Error('Clash YAML verification failed: missing key anti-leak or split routing directives');
+    }
+    console.log('[Test 7] Clash YAML anti-DNS leak & rule-based split routing verification passed!');
+
+    console.log('\n>>> ALL AUTOMATED TESTS (HTTP + TCP PROXY + UDP RELAY + CLASH YAML SPLIT ROUTING) PASSED SUCCESSFULLY! <<<');
 
     if (echoServer) {
       try { echoServer.close(); } catch (e) { }

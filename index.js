@@ -638,12 +638,82 @@ const httpServer = http.createServer(async (req, res) => {
         }
 
         const proxyList = proxyNames.map(name => `      - "${name}"`).join('\n');
+        const directServerRule = net.isIP(currentDomain)
+          ? `  - IP-CIDR,${currentDomain}/32,DIRECT,no-resolve`
+          : `  - DOMAIN,${currentDomain},DIRECT`;
 
         const clashYaml = `port: 7890
 socks-port: 7891
-allow-lan: false
+allow-lan: true
 mode: rule
 log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+find-process-mode: strict
+
+sniffer:
+  enable: true
+  override-destination: false
+  force-dns-mapping: false
+  parse-pure-ip: true
+  sniff:
+    HTTP:
+      ports:
+      - 80
+      - 8080-8880
+    TLS:
+      ports:
+      - 443
+      - 8443
+    QUIC:
+      ports:
+      - 443
+      - 8443
+  skip-domain:
+  - Mijia Cloud
+  - +.push.apple.com
+
+dns:
+  enable: true
+  cache-algorithm: arc
+  listen: 0.0.0.0:53
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter-mode: blacklist
+  fake-ip-filter:
+  - rule-set:fakeipfilter_cn
+  - rule-set:fakeipfilter_!cn
+  - rule-set:private_domain
+  - rule-set:cn_domain
+  - rule-set:microsoftcn_domain
+  - rule-set:applecn_domain
+  - rule-set:steamcn_domain
+  default-nameserver:
+  - 223.5.5.5
+  - 119.29.29.29
+  proxy-server-nameserver:
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
+  direct-nameserver:
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
+  nameserver-policy:
+    rule-set:cn_domain,private_domain,fakeipfilter_cn,steamcn_domain,microsoftcn_domain,applecn_domain:
+    - https://dns.alidns.com/dns-query#disable-qtype-65=true
+    - https://doh.pub/dns-query#disable-qtype-65=true
+    rule-set:fakeipfilter_!cn:
+    - https://8.8.8.8/dns-query#PROXY&disable-qtype-65=true
+  nameserver:
+  - https://8.8.8.8/dns-query#PROXY&ecs=223.5.5.0/24
+  fallback:
+  - https://8.8.8.8/dns-query#PROXY
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    ipcidr:
+    - 240.0.0.0/4
+
 proxies:
 ${proxiesYaml}
 
@@ -651,10 +721,135 @@ proxy-groups:
   - name: PROXY
     type: select
     proxies:
+      - AUTO
 ${proxyList}
       - DIRECT
+  - name: AUTO
+    type: url-test
+    proxies:
+${proxyList}
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+
+rule-providers:
+  reject:
+    type: http
+    behavior: domain
+    url: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt
+    path: ./ruleset/reject.yaml
+    interval: 86400
+  private:
+    type: http
+    behavior: domain
+    url: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt
+    path: ./ruleset/private.yaml
+    interval: 86400
+  direct:
+    type: http
+    behavior: domain
+    url: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt
+    path: ./ruleset/direct.yaml
+    interval: 86400
+  proxy:
+    type: http
+    behavior: domain
+    url: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt
+    path: ./ruleset/proxy.yaml
+    interval: 86400
+  gfw:
+    type: http
+    behavior: domain
+    url: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt
+    path: ./ruleset/gfw.yaml
+    interval: 86400
+  fakeipfilter_cn:
+    type: http
+    interval: 86400
+    behavior: domain
+    format: text
+    url: https://raw.githubusercontent.com/qichiyuhub/rule/refs/heads/main/rules/fakeipfilter-cn.list
+  fakeipfilter_!cn:
+    type: http
+    interval: 86400
+    behavior: domain
+    format: text
+    url: https://raw.githubusercontent.com/qichiyuhub/rule/refs/heads/main/rules/fakeipfilter-!cn.list
+  cn_domain:
+    type: http
+    interval: 86400
+    behavior: domain
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/cn.mrs
+  cn!_domain:
+    type: http
+    interval: 86400
+    behavior: domain
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/geolocation-!cn.mrs
+  private_domain:
+    type: http
+    interval: 86400
+    behavior: domain
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/private.mrs
+  microsoftcn_domain:
+    type: http
+    interval: 86400
+    behavior: domain
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/microsoft@cn.mrs
+  applecn_domain:
+    type: http
+    interval: 86400
+    behavior: domain
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/apple@cn.mrs
+  steamcn_domain:
+    type: http
+    interval: 86400
+    behavior: domain
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geosite/steam@cn.mrs
+  private_ip:
+    type: http
+    interval: 86400
+    behavior: ipcidr
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geoip/private.mrs
+  google_ip:
+    type: http
+    interval: 86400
+    behavior: ipcidr
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geoip/google.mrs
+  cn_ip:
+    type: http
+    interval: 86400
+    behavior: ipcidr
+    format: mrs
+    url: https://github.com/MetaCubeX/meta-rules-dat/raw/refs/heads/meta/geo/geoip/cn.mrs
+  applications:
+    type: http
+    behavior: classical
+    url: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt
+    path: ./ruleset/applications.yaml
+    interval: 86400
 
 rules:
+${directServerRule}
+  - AND,((RULE-SET,cn!_domain),(DST-PORT,443),(NETWORK,UDP)),REJECT
+  - RULE-SET,applications,DIRECT
+  - RULE-SET,private,DIRECT,no-resolve
+  - RULE-SET,reject,REJECT
+  - RULE-SET,direct,DIRECT
+  - RULE-SET,proxy,PROXY
+  - RULE-SET,gfw,PROXY
+  - RULE-SET,cn!_domain,PROXY
+  - RULE-SET,private_ip,DIRECT,no-resolve
+  - RULE-SET,google_ip,PROXY
+  - RULE-SET,cn_ip,DIRECT
+  - GEOIP,CN,DIRECT
   - MATCH,PROXY
 `;
 
