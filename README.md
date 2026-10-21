@@ -15,8 +15,9 @@
 | **连接稳定性** | 目标连接失败时不销毁 WebSocket，导致内存泄漏挂死 | **双向全生命周期流管理**，自动超时释放，杜绝内存与句柄耗尽 |
 | **异常防护** | VLESS 解包缺少防御，畸形包会导致整个 Node 进程崩溃 | **全协议多层 `try...catch` 防御**，抵御非法嗅探与探测请求 |
 | **DNS 解析** | 每次出站连接均实时发起一次 DoH 请求，延迟高且易阻塞 | **内置 5 分钟 DNS TTL 高速缓存** + Google/Cloudflare 并行回退 |
-| **优选 IP 支持** | 只能生成 Vercel 域名节点，需用户手动挨个修改节点地址 | **原生支持 `CF_IP` 环境变量与 `?ip=xxx` 参数**，直接生成优选 CDN 节点 |
-| **订阅格式** | 仅输出单一 Base64 编码 | 支持 **标准 Base64 订阅** 与 **`?raw=1` 浏览器明文直读模式** |
+| **优选 IP 矩阵** | 只能生成 Vercel 域名节点，需用户手动挨个修改节点地址 | **内置国内三网（移动/联通/电信/高速）优选 Anycast IP 矩阵**，且支持 `CF_IP` 与 `?ip=` 自定义 |
+| **订阅体验与分流** | 仅输出单一 Base64 编码，无分流规则 | **原生 Clash YAML 订阅** + 深度防 DNS 泄露 (`fake-ip`) + Loyalsoldier 分流 + `url-test` 自动测速组 |
+| **订阅元数据与防盗** | 零安全鉴权，易被爬虫批量抓取 | **支持 `SUB_TOKEN` 防盗令牌** + 规范客户端标头（显示 2TB 虚拟流量与到期时间，24h 静默自更）|
 | **国内直连反代** | 原反代脚本缺失 `Host` 请求头修正，导致 Vercel 频发 404 | 提供 **专业级 Cloudflare Worker 反代脚本 (`cf-worker.js`)** |
 
 ---
@@ -30,7 +31,8 @@
 | `UUID` | 自动生成或默认 | **强烈建议填写** | 节点核心身份凭证（UUID 格式，VLESS/Trojan/SS 密码均使用此值） |
 | `DOMAIN` | 自动识别当前 Host | 选填 | 节点绑定的域名（填写反代域名或自定义域名，如 `my-proxy.workers.dev`） |
 | `CF_IP` | 空 | 选填 | **Cloudflare 优选 IP 或优选域名**（如 `visa.cn`、`cf.090227.xyz` 等），配置后自动生成优选加速节点 |
-| `SUB_PATH` | `vercel` | 选填 | 节点订阅的访问路径（例如设为 `mysecret`，则订阅地址为 `/mysecret`） |
+| `SUB_PATH` | `vercel` | 选填 | 节点订阅的访问路径（例如设为 `mysub888`，则订阅地址为 `/mysub888`） |
+| `SUB_TOKEN` | 空 | 选填 | **订阅安全防盗访问令牌**（如设为 `mykey123`，必须带 `?token=mykey123` 才能读取订阅，彻底防盗防扫） |
 | `WSPATH` | UUID 前 8 位 | 选填 | WebSocket 传输路径（默认截取 UUID 前 8 位） |
 | `NAME` | `Vercel` | 选填 | 节点在客户端中显示的名称前缀 |
 | `PORT` | `3000` | 选填 | 本地或容器内监听的端口号（Vercel 上会自动管理） |
@@ -123,7 +125,7 @@
 
 - **v2rayN / v2rayNG**：点击 `订阅设置` ➡ `添加` ➡ 粘贴订阅 URL ➡ 保存并更新订阅。
 - **Shadowrocket (小火箭)**：首页右上角 `+` 号 ➡ 类型选择 `Subscribe` ➡ 粘贴订阅 URL ➡ 点击完成。
-- **Clash Verge / Mihomo Party / Sing-box**：直接将订阅链接粘贴进在线订阅转换器（如 [Subconverter](https://sub.xeton.dev/)），选择对应客户端配置后下载即可。
+- **Clash Verge / Mihomo Party / Clash Meta**：**原生直连支持**！直接将 `https://你的域名/你的订阅路径?clash=1` 填入配置订阅中即可，自动附带三网测速组、流量卡片与防 DNS 泄露规则。
 
 ---
 

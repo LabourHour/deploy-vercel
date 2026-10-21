@@ -174,7 +174,27 @@ setTimeout(async () => {
     }
     console.log('[Test 7] Clash YAML anti-DNS leak & rule-based split routing verification passed!');
 
-    console.log('\n>>> ALL AUTOMATED TESTS (HTTP + TCP PROXY + UDP RELAY + CLASH YAML SPLIT ROUTING) PASSED SUCCESSFULLY! <<<');
+    // 8. Test Subscription Metadata & Carrier Matrix in Clash YAML
+    const profileTitle = clashRes.headers.get('Profile-Title');
+    const subUserinfo = clashRes.headers.get('Subscription-Userinfo');
+    const updateInterval = clashRes.headers.get('Profile-Update-Interval');
+    const robotsTag = clashRes.headers.get('X-Robots-Tag');
+
+    console.log('[Test 8] Profile-Title:', profileTitle, '| Subscription-Userinfo:', subUserinfo);
+    if (!profileTitle || !subUserinfo || updateInterval !== '24' || !robotsTag.includes('noindex')) {
+      throw new Error('Missing subscription metadata or security headers');
+    }
+    if (!clashYaml.includes('🚀 自动选择') ||
+        !clashYaml.includes('🇨🇳 移动专选') ||
+        !clashYaml.includes('🇨🇳 联通专选') ||
+        !clashYaml.includes('🇨🇳 电信专选') ||
+        !clashYaml.includes('⚡ 高速选优') ||
+        !clashYaml.includes('🌐 原生直连')) {
+      throw new Error('Missing carrier-optimized proxy groups in Clash YAML');
+    }
+    console.log('[Test 8] Subscription headers & Carrier-Optimized Matrix verification passed!');
+
+    console.log('\n>>> ALL AUTOMATED TESTS (HTTP + TCP PROXY + UDP RELAY + CLASH YAML + CARRIER MATRIX + HEADERS) PASSED SUCCESSFULLY! <<<');
 
     if (echoServer) {
       try { echoServer.close(); } catch (e) { }

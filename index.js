@@ -42,7 +42,16 @@ const UUID = (process.env.UUID || DEFAULT_FALLBACK_UUID).trim().toLowerCase();
 const DOMAIN = (process.env.DOMAIN || '').trim(); // 若留空，自动使用客户端访问时的 Host
 const CF_IP = (process.env.CF_IP || process.env.PROXY_IP || '').trim(); // 优选 IP / 优选域名（可选）
 const SUB_PATH = (process.env.SUB_PATH || 'vercel').trim().replace(/^\//, ''); // 订阅路径
+const SUB_TOKEN = (process.env.SUB_TOKEN || '').trim(); // 订阅访问令牌（可选，防盗用与扫号）
 const NAME = (process.env.NAME || 'Vercel').trim(); // 节点前缀名称
+
+// 内置国内三网（移动/联通/电信/高速）优选 Anycast IP 矩阵
+const DEFAULT_CLEAN_IPS = {
+  cm: ['162.159.133.16', '198.41.208.201'],  // 🇨🇳 移动优选
+  cu: ['172.64.67.117', '162.159.236.194'],  // 🇨🇳 联通优选
+  ct: ['104.17.186.208', '104.18.172.247'],  // 🇨🇳 电信优选
+  fast: ['172.64.229.250', '104.16.160.1']   // ⚡ 通用高速
+};
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const WSPATH = (process.env.WSPATH || UUID.slice(0, 8)).trim().replace(/^\//, ''); // WebSocket 路径
 
@@ -575,6 +584,16 @@ const httpServer = http.createServer(async (req, res) => {
   // 2. 订阅路径：生成 VLESS / Trojan / Shadowsocks 节点
   if (pathname === `/${SUB_PATH}`) {
     try {
+      // 安全防盗鉴权：若环境变量设置了 SUB_TOKEN，必须携带匹配的 token 参数或请求头
+      if (SUB_TOKEN) {
+        const queryToken = urlObj.searchParams.get('token') || req.headers['x-sub-token'];
+        if (queryToken !== SUB_TOKEN) {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Robots-Tag': 'noindex, nofollow' });
+          res.end('Not Found\n');
+          return;
+        }
+      }
+
       const geo = await getGeoInfo();
       const rawMode = urlObj.searchParams.get('raw') === '1' || urlObj.searchParams.get('format') === 'raw';
 
@@ -601,21 +620,90 @@ const httpServer = http.createServer(async (req, res) => {
       const nodes = [];
       const nodeTag = NAME ? `${NAME}-${geo.isp}` : geo.isp;
 
-      // 节点 1: 直连节点 (使用当前分配域名)
-      const vlsDirect = `vless://${UUID}@${currentDomain}:${port}?encryption=none&security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(nodeTag)}`;
-      const troDirect = `trojan://${UUID}@${currentDomain}:${port}?security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(nodeTag)}`;
+      // 1. 直连节点 (原生机房线路)
+      const vlsDirectTag = `[原生直连] ${nodeTag}-VLESS`;
+      const troDirectTag = `[原生直连] ${nodeTag}-Trojan`;
+      const ssDirectTag = `[原生直连] ${nodeTag}-Shadowsocks`;
+
+      const vlsDirect = `vless://${UUID}@${currentDomain}:${port}?encryption=none&security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(vlsDirectTag)}`;
+      const troDirect = `trojan://${UUID}@${currentDomain}:${port}?security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(troDirectTag)}`;
       const ssPassword = Buffer.from(`none:${UUID}`).toString('base64');
-      const ssDirect = `ss://${ssPassword}@${currentDomain}:${port}?plugin=v2ray-plugin;mode%3Dwebsocket;host%3D${currentDomain};path%3D%2F${WSPATH};${ssTlsParam}sni%3D${currentDomain};skip-cert-verify%3Dtrue;mux%3D0#${encodeURIComponent(nodeTag)}`;
+      const ssDirect = `ss://${ssPassword}@${currentDomain}:${port}?plugin=v2ray-plugin;mode%3Dwebsocket;host%3D${currentDomain};path%3D%2F${WSPATH};${ssTlsParam}sni%3D${currentDomain};skip-cert-verify%3Dtrue;mux%3D0#${encodeURIComponent(ssDirectTag)}`;
 
       nodes.push(vlsDirect, troDirect, ssDirect);
 
-      // 节点 2: 如果配置了优选 IP / 域名，自动附带 CDN 优选加速节点
+      const clashProxiesList = [];
+      const clashDirectProxies = [vlsDirectTag, troDirectTag];
+
+      clashProxiesList.push({
+        name: vlsDirectTag,
+        yaml: `  - name: "${vlsDirectTag}"\n    type: vless\n    server: "${currentDomain}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+      });
+      clashProxiesList.push({
+        name: troDirectTag,
+        yaml: `  - name: "${troDirectTag}"\n    type: trojan\n    server: "${currentDomain}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+      });
+
+      // 2. 自定义优选 IP 节点（如果传入了 ?ip= 或环境变量配置了 CF_IP）
       if (queryPreferredIP) {
-        const preferredTag = `[优选CDN] ${nodeTag}`;
-        const vlsPreferred = `vless://${UUID}@${queryPreferredIP}:${port}?encryption=none&security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(preferredTag)}`;
-        const troPreferred = `trojan://${UUID}@${queryPreferredIP}:${port}?security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(preferredTag)}`;
-        const ssPreferred = `ss://${ssPassword}@${queryPreferredIP}:${port}?plugin=v2ray-plugin;mode%3Dwebsocket;host%3D${currentDomain};path%3D%2F${WSPATH};${ssTlsParam}sni%3D${currentDomain};skip-cert-verify%3Dtrue;mux%3D0#${encodeURIComponent(preferredTag)}`;
+        const prefVlsName = `[CDN优选] ${nodeTag}-VLESS`;
+        const prefTroName = `[CDN优选] ${nodeTag}-Trojan`;
+        const prefSsName = `[CDN优选] ${nodeTag}-SS`;
+
+        const vlsPreferred = `vless://${UUID}@${queryPreferredIP}:${port}?encryption=none&security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(prefVlsName)}`;
+        const troPreferred = `trojan://${UUID}@${queryPreferredIP}:${port}?security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(prefTroName)}`;
+        const ssPreferred = `ss://${ssPassword}@${queryPreferredIP}:${port}?plugin=v2ray-plugin;mode%3Dwebsocket;host%3D${currentDomain};path%3D%2F${WSPATH};${ssTlsParam}sni%3D${currentDomain};skip-cert-verify%3Dtrue;mux%3D0#${encodeURIComponent(prefSsName)}`;
+
         nodes.push(vlsPreferred, troPreferred, ssPreferred);
+
+        clashProxiesList.push({
+          name: prefVlsName,
+          yaml: `  - name: "${prefVlsName}"\n    type: vless\n    server: "${queryPreferredIP}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+        });
+        clashProxiesList.push({
+          name: prefTroName,
+          yaml: `  - name: "${prefTroName}"\n    type: trojan\n    server: "${queryPreferredIP}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+        });
+      }
+
+      // 3. 内置三网（移动/联通/电信/高速）优选 Anycast IP 矩阵
+      const carrierConfigs = [
+        { key: 'cm', label: '🇨🇳 移动优选', ips: DEFAULT_CLEAN_IPS.cm },
+        { key: 'cu', label: '🇨🇳 联通优选', ips: DEFAULT_CLEAN_IPS.cu },
+        { key: 'ct', label: '🇨🇳 电信优选', ips: DEFAULT_CLEAN_IPS.ct },
+        { key: 'fast', label: '⚡ 高速通用', ips: DEFAULT_CLEAN_IPS.fast }
+      ];
+
+      const carrierNodeMap = {
+        cm: [],
+        cu: [],
+        ct: [],
+        fast: []
+      };
+
+      for (const item of carrierConfigs) {
+        item.ips.forEach((cleanIp, idx) => {
+          const vlsName = `${item.label}-${idx + 1}-VLESS`;
+          const troName = `${item.label}-${idx + 1}-Trojan`;
+
+          carrierNodeMap[item.key].push(vlsName, troName);
+
+          // raw 订阅中为每个运营商添加代表性优选节点
+          if (idx === 0) {
+            const vlsLink = `vless://${UUID}@${cleanIp}:${port}?encryption=none&security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(vlsName)}`;
+            const troLink = `trojan://${UUID}@${cleanIp}:${port}?security=${tlsParam}&sni=${currentDomain}&fp=chrome&type=ws&host=${currentDomain}&path=%2F${WSPATH}#${encodeURIComponent(troName)}`;
+            nodes.push(vlsLink, troLink);
+          }
+
+          clashProxiesList.push({
+            name: vlsName,
+            yaml: `  - name: "${vlsName}"\n    type: vless\n    server: "${cleanIp}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+          });
+          clashProxiesList.push({
+            name: troName,
+            yaml: `  - name: "${troName}"\n    type: trojan\n    server: "${cleanIp}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`
+          });
+        });
       }
 
       const isClash = urlObj.searchParams.get('clash') === '1' ||
@@ -623,21 +711,19 @@ const httpServer = http.createServer(async (req, res) => {
                       (req.headers['user-agent'] || '').toLowerCase().includes('clash') ||
                       (req.headers['user-agent'] || '').toLowerCase().includes('mihomo');
 
+      const subUserinfo = `upload=0; download=0; total=${2 * 1024 * 1024 * 1024 * 1024}; expire=${Math.floor(Date.now() / 1000) + 365 * 86400}`;
+      const profileTitle = NAME || 'LikeYou-Vercel';
+
       if (isClash) {
-        const vlessName = `${nodeTag}-VLESS`;
-        const trojanName = `${nodeTag}-Trojan`;
-        const proxyNames = [vlessName, trojanName];
+        const allProxyNames = clashProxiesList.map(p => p.name);
+        const proxiesYaml = clashProxiesList.map(p => p.yaml).join('\n');
+        const allProxyList = allProxyNames.map(name => `      - "${name}"`).join('\n');
+        const directProxyList = clashDirectProxies.map(name => `      - "${name}"`).join('\n');
+        const cmProxyList = carrierNodeMap.cm.map(name => `      - "${name}"`).join('\n');
+        const cuProxyList = carrierNodeMap.cu.map(name => `      - "${name}"`).join('\n');
+        const ctProxyList = carrierNodeMap.ct.map(name => `      - "${name}"`).join('\n');
+        const fastProxyList = carrierNodeMap.fast.map(name => `      - "${name}"`).join('\n');
 
-        let proxiesYaml = `  - name: "${vlessName}"\n    type: vless\n    server: "${currentDomain}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"\n  - name: "${trojanName}"\n    type: trojan\n    server: "${currentDomain}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`;
-
-        if (queryPreferredIP) {
-          const prefVlsName = `[优选CDN] ${nodeTag}-VLESS`;
-          const prefTroName = `[优选CDN] ${nodeTag}-Trojan`;
-          proxyNames.push(prefVlsName, prefTroName);
-          proxiesYaml += `\n  - name: "${prefVlsName}"\n    type: vless\n    server: "${queryPreferredIP}"\n    port: ${port}\n    uuid: "${UUID}"\n    network: ws\n    tls: ${isHttps}\n    udp: true\n    sni: "${currentDomain}"\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"\n  - name: "${prefTroName}"\n    type: trojan\n    server: "${queryPreferredIP}"\n    port: ${port}\n    password: "${UUID}"\n    network: ws\n    sni: "${currentDomain}"\n    udp: true\n    ws-opts:\n      path: "/${WSPATH}"\n      headers:\n        Host: "${currentDomain}"`;
-        }
-
-        const proxyList = proxyNames.map(name => `      - "${name}"`).join('\n');
         const directServerRule = net.isIP(currentDomain)
           ? `  - IP-CIDR,${currentDomain}/32,DIRECT,no-resolve`
           : `  - DOMAIN,${currentDomain},DIRECT`;
@@ -721,16 +807,60 @@ proxy-groups:
   - name: PROXY
     type: select
     proxies:
-      - AUTO
-${proxyList}
+      - "🚀 自动选择"
+      - "🇨🇳 移动专选"
+      - "🇨🇳 联通专选"
+      - "🇨🇳 电信专选"
+      - "⚡ 高速选优"
+      - "🌐 原生直连"
+${allProxyList}
       - DIRECT
-  - name: AUTO
+  - name: "🚀 自动选择"
     type: url-test
-    proxies:
-${proxyList}
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
+    proxies:
+${allProxyList}
+  - name: AUTO
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+${allProxyList}
+  - name: "🇨🇳 移动专选"
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+${cmProxyList}
+  - name: "🇨🇳 联通专选"
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+${cuProxyList}
+  - name: "🇨🇳 电信专选"
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+${ctProxyList}
+  - name: "⚡ 高速选优"
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+${fastProxyList}
+  - name: "🌐 原生直连"
+    type: select
+    proxies:
+${directProxyList}
 
 rule-providers:
   reject:
@@ -855,7 +985,11 @@ ${directServerRule}
 
         res.writeHead(200, {
           'Content-Type': 'text/yaml; charset=utf-8',
-          'Content-Disposition': 'inline; filename="clash.yaml"',
+          'Content-Disposition': 'attachment; filename="clash.yaml"; filename*=UTF-8\'\'clash.yaml',
+          'Profile-Title': profileTitle,
+          'Profile-Update-Interval': '24',
+          'Subscription-Userinfo': subUserinfo,
+          'X-Robots-Tag': 'noindex, nofollow, noarchive',
           'Access-Control-Allow-Origin': '*'
         });
         res.end(clashYaml);
@@ -864,18 +998,22 @@ ${directServerRule}
 
       const subscriptionContent = nodes.join('\n');
 
+      const headers = {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="subscription.txt"; filename*=UTF-8\'\'subscription.txt',
+        'Profile-Title': profileTitle,
+        'Profile-Update-Interval': '24',
+        'Subscription-Userinfo': subUserinfo,
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+        'Access-Control-Allow-Origin': '*'
+      };
+
       if (rawMode) {
-        res.writeHead(200, {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'Access-Control-Allow-Origin': '*'
-        });
+        res.writeHead(200, headers);
         res.end(subscriptionContent + '\n');
       } else {
         const base64Content = Buffer.from(subscriptionContent).toString('base64');
-        res.writeHead(200, {
-          'Content-Type': 'text/plain; charset=utf-8',
-          'Access-Control-Allow-Origin': '*'
-        });
+        res.writeHead(200, headers);
         res.end(base64Content + '\n');
       }
     } catch (err) {
